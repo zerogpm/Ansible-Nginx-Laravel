@@ -1,0 +1,168 @@
+---
+
+- hosts: all
+
+  vars:
+    web_data: www-data
+    project_path: /var/www/html/project
+    web_dir: "{{ project_path }}/public"
+    site_name: www.chris.online
+
+  tasks:
+
+    - name: Upgrate APT Package Manager repositories cache
+      become: true
+      apt:
+        update_cache: yes
+
+    - name: Install aptitude
+      become: true
+      apt:
+        name: aptitude
+
+    - name: Install git
+      become: true
+      apt:
+        name: git
+
+    - name: Install low-level utilities
+      become: true
+      apt:
+        name: "{{ item }}"
+      with_items:
+        - zip
+        - unzip
+        - build-essential
+
+    - name: Install Nginx
+      become: true
+      apt:
+        name: nginx
+        state: latest
+      notify: Restart Nginx
+
+    - name: ADD PHP 7 PPA repository
+      become: true
+      apt_repository:
+        repo: 'ppa:ondrej/php'
+
+    - name: Install PHP packages
+      become: true
+      apt:
+        name: "{{ item }}"
+        state: latest
+      with_items:
+        - php7.2-cli
+        - php7.2-fpm
+        - php7.2-curl
+        - php7.2-intl
+        - php7.2-mysql
+        - php7.2-json
+        - php7.2-xml
+        - php7.2-gd
+        - php7.2-mbstring
+        - php7.2-common
+      notify: Restart PHP-FPM
+
+    - name: Set data.timezone for Cli
+      become: true
+      lineinfile:
+        dest: /etc/php/7.2/cli/php.ini
+        regexp: "date.timezone ="
+        line: "date.timezone = UTC"
+      notify: Restart PHP-FPM
+
+    - name: Set data.timezone for PHP FPM
+      become: true
+      lineinfile:
+        dest: /etc/php/7.2/fpm/php.ini
+        regexp: "date.timezone ="
+        line: "date.timezone = UTC"
+
+    - name: Create project directory and set its permission
+      become: true
+      file:
+        path: "{{ project_path }}"
+        state: directory
+        recurse: yes
+
+    - name: Check out laravel Project
+      become: true
+      git:
+        repo: https://github.com/laravel/laravel.git
+        dest: "{{ project_path }}"
+
+    - name: Add config .env
+      become: true
+      template:
+        src: templates/.env
+        dest: "{{ project_path }}"
+
+    - name: Download Composer
+      script: scripts/install_composer.sh
+
+    - name: Move Composer globally
+      become: true
+      command: "mv composer.phar /usr/local/bin/composer"
+
+    - name: Set Permission on Composer
+      become: true
+      file:
+        path: /usr/local/bin/composer
+        mode: "a+x"
+
+    - name: Install Compose's dependencies
+      become: true
+      composer:
+        working_dir: "{{ project_path }}"
+
+    - name: Set Laravel boostrap cache folder permission
+      become: true
+      file:
+        path: "{{ project_path }}/bootstrap/cache"
+        owner: "{{ web_data }}"
+        group: "{{ web_data }}"
+        recurse: yes
+
+    - name: Set Laravel storage folder permission
+      become: true
+      file:
+        path: "{{ project_path }}/storage"
+        owner: "{{ web_data }}"
+        group: "{{ web_data }}"
+        recurse: yes
+
+    - name: Add config template to the Nginx available sites
+      become: true
+      template:
+        src: templates/nginx.conf
+        dest: "/etc/nginx/sites-available/{{ site_name }}.conf"
+      notify: Restart Nginx
+
+    - name: Add config template to the Nginx available sites
+      become: true
+      file:
+        src: "/etc/nginx/sites-available/{{ site_name }}.conf"
+        dest: "/etc/nginx/sites-enabled/{{ site_name }}.conf"
+        state: link
+      notify: Restart Nginx
+
+    # Laravel console commands
+    - name: Laravel Keys
+      become: true
+      command: 'php {{ project_path }}/artisan key:generate'
+      tags:
+        - test
+
+  handlers:
+    - name: Restart Nginx
+      become: true
+      service:
+        name: nginx
+        state: restarted
+
+    - name: Restart PHP-FPM
+      become: true
+      service:
+        name: php7.2-fpm
+        state: restarted
